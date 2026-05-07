@@ -15,8 +15,13 @@ cp .env.example .env
 # 3. Build MCP server
 npm run build
 
-# 4. Configure Claude Code MCP (see Configuration section)
-# Edit ~/.config/Code/User/mcp.json
+# 4. Add MCP server to Claude Code (easiest method)
+claude mcp add squash-tm \
+  --command "node" \
+  --args "$(pwd)/dist/index.js" \
+  --cwd "$(pwd)" \
+  --env SQUASH_TM_BASE_URL=https://your-squash-instance.com/squash/api/rest/latest \
+  --env SQUASH_TM_API_TOKEN=your-api-token-here
 
 # 5. Restart Claude Code
 
@@ -63,7 +68,21 @@ SQUASH_TM_API_TOKEN=your-api-token-here
 npm run build
 ```
 
-**Configure VSCode MCP Settings:**
+**Option A: Using Claude CLI (Recommended - Easiest)**
+
+```bash
+# Add the MCP server using Claude CLI
+claude mcp add squash-tm \
+  --command "node" \
+  --args "/absolute/path/to/squash-tm-mcp/dist/index.js" \
+  --cwd "/absolute/path/to/squash-tm-mcp" \
+  --env SQUASH_TM_BASE_URL=https://your-squash-instance.com/squash/api/rest/latest \
+  --env SQUASH_TM_API_TOKEN=your-api-token-here
+
+# Restart Claude Code
+```
+
+**Option B: Manual Configuration**
 
 Create or edit `~/.config/Code/User/mcp.json` (Linux/Mac) or `%APPDATA%\Code\User\mcp.json` (Windows):
 ```json
@@ -474,11 +493,15 @@ Feature: Create Order
 **Problem:** MCP tools with prefix `mcp__squash-tm__*` are not showing up in Claude Code.
 
 **Solution:**
-1. Verify MCP config exists: `cat ~/.config/Code/User/mcp.json`
-2. Check the server path is absolute: `/absolute/path/to/squash-tm-mcp/dist/index.js`
-3. Ensure the server is built: `cd /path/to/squash-tm-mcp && npm run build`
-4. Restart Claude Code completely (close all windows and reopen)
-5. Check VSCode Developer Tools (Help → Toggle Developer Tools) for MCP errors
+1. Try using the Claude CLI to add the server (easiest):
+   ```bash
+   claude mcp add squash-tm --command "node" --args "$(pwd)/dist/index.js" --cwd "$(pwd)"
+   ```
+2. Verify MCP config exists: `cat ~/.config/Code/User/mcp.json`
+3. Check the server path is absolute: `/absolute/path/to/squash-tm-mcp/dist/index.js`
+4. Ensure the server is built: `cd /path/to/squash-tm-mcp && npm run build`
+5. Restart Claude Code completely (close all windows and reopen)
+6. Check VSCode Developer Tools (Help → Toggle Developer Tools) for MCP errors
 
 ### Transmit Operation Fails with "fetch failed"
 
