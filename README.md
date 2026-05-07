@@ -2,6 +2,28 @@
 
 A Model Context Protocol (MCP) agent for interacting with Squash TM test management system. This agent allows AI assistants to create, update, and sync test cases with Squash TM.
 
+## Quick Start
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your Squash TM credentials
+
+# 3. Build MCP server
+npm run build
+
+# 4. Configure Claude Code MCP (see Configuration section)
+# Edit ~/.config/Code/User/mcp.json
+
+# 5. Restart Claude Code
+
+# 6. Use MCP tools in Claude Code
+# Example: "sync and transmit test 2314"
+```
+
 ## Features
 
 - **Sync Feature Files to Squash TM**: Automatically sync Gherkin feature files to Squash TM test cases
@@ -21,16 +43,60 @@ npm install
 
 ## Configuration
 
-1. Copy `.env.example` to `.env`:
+### 1. Environment Variables
+
+Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
 
-2. Configure your Squash TM credentials:
+Configure your Squash TM credentials:
 ```env
 SQUASH_TM_BASE_URL=https://your-squash-tm-instance/api/rest/latest
 SQUASH_TM_API_TOKEN=your-api-token-here
 ```
+
+### 2. MCP Server Setup for Claude Code
+
+**Build the MCP Server:**
+```bash
+npm run build
+```
+
+**Configure VSCode MCP Settings:**
+
+Create or edit `~/.config/Code/User/mcp.json` (Linux/Mac) or `%APPDATA%\Code\User\mcp.json` (Windows):
+```json
+{
+  "servers": {
+    "squash-tm": {
+      "command": "node",
+      "args": ["/absolute/path/to/squash-tm-mcp/dist/index.js"],
+      "cwd": "/absolute/path/to/squash-tm-mcp",
+      "env": {
+        "SQUASH_TM_BASE_URL": "https://your-squash-instance.com/squash/api/rest/latest",
+        "SQUASH_TM_API_TOKEN": "your-api-token-here"
+      }
+    }
+  }
+}
+```
+
+**Note:** Replace `/absolute/path/to/squash-tm-mcp` with the actual absolute path where you cloned this repository.
+
+**Activate MCP Tools:**
+1. Build the server: `npm run build`
+2. Restart Claude Code (VSCode)
+3. MCP tools become available with prefix `mcp__squash-tm__*`
+
+**Available MCP Tools:**
+- `mcp__squash-tm__sync_feature_to_squash` - Sync feature file to test case
+- `mcp__squash-tm__transmit_test_case` - Mark test case as transmitted
+- `mcp__squash-tm__get_test_case` - Get test case details
+- `mcp__squash-tm__create_test_step` - Create new step
+- `mcp__squash-tm__update_test_step` - Update existing step
+- `mcp__squash-tm__delete_test_steps` - Delete steps
+- And more (see MCP Tools section below)
 
 ## MCP Tools Available
 
@@ -282,14 +348,54 @@ Get clearances (permissions) grouped by profiles for a project.
 **Parameters:**
 - `projectId` (number): Squash TM project ID
 
-## Standalone Usage
+## Usage
 
-### Sync Feature File
+### Typical Workflow
+
+**1. Using MCP Tools (Recommended - Integrated with Claude Code):**
+
+```typescript
+// After MCP server is configured and Claude Code is restarted:
+
+// Sync feature file to Squash TM
+mcp__squash-tm__sync_feature_to_squash({
+  featureFilePath: "features/Homepage/2314_Cookies_product_page.feature",
+  testCaseId: 2314
+})
+
+// Transmit test case to mark as ready
+mcp__squash-tm__transmit_test_case({
+  testCaseId: "2314"
+})
+```
+
+**2. Using Standalone Scripts (Alternative):**
+
+```bash
+# From your test project directory:
+# Sync feature file (using global MCP agent)
+npx tsx /path/to/squash-tm-mcp/scripts/syncSquashTM.ts \
+  features/Homepage/2314_Cookies_product_page.feature \
+  2314
+
+# Transmit test case
+cd /path/to/squash-tm-mcp && npm run transmit 2314
+```
+
+**3. Test Case ID Pattern:**
+
+Feature files should follow naming convention: `{test-case-id}_{description}.feature`
+
+Example: `2314_Cookies_product_page.feature` → Test Case ID: **2314**
+
+### Quick Commands
+
+**Sync Feature File:**
 ```bash
 npm run sync features/Order/2641_Create_Order.feature 2641
 ```
 
-### Transmit Test Case
+**Transmit Test Case:**
 ```bash
 npm run transmit 2641
 ```
@@ -360,6 +466,56 @@ Feature: Create Order
 - Authentication errors: Check `SQUASH_TM_API_TOKEN` or credentials
 - 404 errors: Verify test case ID exists in Squash TM
 - 412 errors: Dataset name conflicts (use unique names or update logic)
+
+## Troubleshooting
+
+### MCP Tools Not Available in Claude Code
+
+**Problem:** MCP tools with prefix `mcp__squash-tm__*` are not showing up in Claude Code.
+
+**Solution:**
+1. Verify MCP config exists: `cat ~/.config/Code/User/mcp.json`
+2. Check the server path is absolute: `/absolute/path/to/squash-tm-mcp/dist/index.js`
+3. Ensure the server is built: `cd /path/to/squash-tm-mcp && npm run build`
+4. Restart Claude Code completely (close all windows and reopen)
+5. Check VSCode Developer Tools (Help → Toggle Developer Tools) for MCP errors
+
+### Transmit Operation Fails with "fetch failed"
+
+**Problem:** `mcp__squash-tm__transmit_test_case` returns MCP error -32603: fetch failed
+
+**Solution:**
+1. Verify the test case exists in Squash TM
+2. Check your API token has proper permissions
+3. Try the standalone script: `cd /path/to/squash-tm-mcp && npm run transmit <test-case-id>`
+4. If standalone works but MCP fails, restart Claude Code
+5. Check network connectivity to Squash TM instance
+
+### Sync Operation Updates Wrong Steps
+
+**Problem:** Sync creates duplicate steps or updates wrong test case.
+
+**Solution:**
+1. Verify test case ID matches the filename: `2314_*.feature` → ID 2314
+2. Check the feature file is valid Gherkin (proper indentation and syntax)
+3. Manually verify test case in Squash TM before syncing
+4. Use `get_test_case` MCP tool to inspect current state first
+
+### Authentication Issues
+
+**Problem:** API returns 401 Unauthorized or 403 Forbidden.
+
+**Solution:**
+1. Regenerate API token in Squash TM (User Settings → Access Tokens)
+2. Update token in both:
+   - `.env` file: `SQUASH_TM_API_TOKEN=...`
+   - MCP config: `~/.config/Code/User/mcp.json`
+3. Rebuild and restart: `npm run build` then restart Claude Code
+4. Test with curl:
+   ```bash
+   curl -H "Authorization: Bearer YOUR_TOKEN" \
+        https://your-squash-instance.com/squash/api/rest/latest/test-cases/2314
+   ```
 
 ## Contributing
 
