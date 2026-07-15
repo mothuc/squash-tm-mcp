@@ -8,6 +8,7 @@ import { SquashStep } from '../types.js';
 export class TestStepClient extends BaseClient {
   /**
    * Get all steps for a test case
+   * Note: size=100 is more than enough — a BDD test case never has >100 steps.
    */
   async getAllSteps(testCaseId: number): Promise<SquashStep[]> {
     const url = `${this.baseURL}/test-cases/${testCaseId}/steps?page=0&size=100`;
