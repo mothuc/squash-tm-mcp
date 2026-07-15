@@ -54,6 +54,11 @@ export class TestStepClient extends BaseClient {
       body: JSON.stringify(stepData)
     });
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to create step for test case ${testCaseId}: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+
     return await response.json();
   }
 
@@ -81,6 +86,11 @@ export class TestStepClient extends BaseClient {
       method: 'PATCH',
       body: JSON.stringify(patchData)
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to update step ${stepId}: ${response.status} ${response.statusText}\n${errorText}`);
+    }
 
     return await response.json();
   }
