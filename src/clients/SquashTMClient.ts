@@ -199,6 +199,10 @@ export class SquashTMClient {
     return this.automationClient.transmitTestCase(testCaseId);
   }
 
+  async markTestCaseAutomated(testCaseId: string): Promise<{ success: boolean; url: string }> {
+    return this.automationClient.markTestCaseAutomated(testCaseId);
+  }
+
   async getAutomationRequests(): Promise<any[]> {
     return this.automationClient.getAutomationRequests();
   }

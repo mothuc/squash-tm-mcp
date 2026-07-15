@@ -155,6 +155,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'mark_test_case_automated',
+        description: 'Mark a test case automation request as AUTOMATED, so it is ready to be run in an execution (requires web session).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            testCaseId: {
+              type: 'string',
+              description: 'Squash TM test case ID',
+            },
+          },
+          required: ['testCaseId'],
+        },
+      },
+      {
         name: 'create_keyword_test_case',
         description: 'Create a new keyword-test-case (BDD format with individual keyword steps) in Squash TM. This creates an empty test case shell that can be populated with keyword steps using create_test_step.',
         inputSchema: {
@@ -595,6 +609,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { testCaseId } = args as { testCaseId: string };
 
         const result = await client.transmitTestCase(testCaseId);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'mark_test_case_automated': {
+        const { testCaseId } = args as { testCaseId: string };
+
+        const result = await client.markTestCaseAutomated(testCaseId);
 
         return {
           content: [
