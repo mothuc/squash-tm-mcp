@@ -37,7 +37,8 @@ export class TestCaseClient extends BaseClient {
   }
 
   /**
-   * Create keyword test case (BDD format with individual steps)
+   * Create keyword test case (individual Given/When/Then steps).
+   * API _type is "keyword-test-case"; shown as "BDD Test Case" in the Squash TM UI.
    */
   async createKeywordTestCase(params: CreateKeywordTestCaseParams): Promise<TestCase> {
     const payload = {

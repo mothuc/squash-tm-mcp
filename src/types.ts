@@ -33,7 +33,7 @@ export interface TestCase {
   description: string;
   datasets?: Dataset[];
   parameters?: Array<{ id: number; name: string }>;
-  _type?: string; // e.g., "test-case", "scripted-test-case", "keyword-test-case"
+  _type?: string; // e.g., "test-case", "scripted-test-case", "keyword-test-case" (shown as "BDD Test Case" in the Squash TM UI)
   script?: string; // Gherkin script for BDD test cases
 }
 

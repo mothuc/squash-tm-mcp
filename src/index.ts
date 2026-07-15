@@ -170,7 +170,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'create_keyword_test_case',
-        description: 'Create a new keyword-test-case (BDD format with individual keyword steps) in Squash TM. This creates an empty test case shell that can be populated with keyword steps using create_test_step.',
+        description: 'Create a new keyword-test-case (shown as "BDD Test Case" in the Squash TM UI; API _type is "keyword-test-case") with individual keyword steps. This creates an empty test case shell that can be populated with keyword steps using create_test_step.',
         inputSchema: {
           type: 'object',
           properties: {
