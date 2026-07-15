@@ -22,4 +22,4 @@ echo "📄 Found feature file: $FEATURE_FILE"
 echo ""
 
 # Run sync script
-npx ts-node "$(dirname "$0")/syncSquashTM.ts" "$FEATURE_FILE" "$TEST_ID"
+npx tsx "$(dirname "$0")/syncSquashTM.ts" "$FEATURE_FILE" "$TEST_ID"
