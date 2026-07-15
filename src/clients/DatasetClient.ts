@@ -60,24 +60,26 @@ export class DatasetClient extends BaseClient {
     const existingDataset = testCase.datasets?.find((ds: any) => ds.name === datasetName);
     const parameter_values: any[] = [];
 
+    // Always include EVERY parameter (including empty values) so that clearing a
+    // value locally also clears it on Squash TM. Local feature file is the source
+    // of truth: a param changed from "has value" -> "" must overwrite the old value.
     paramNamesInOrder.forEach((paramName, index) => {
-      const paramValue = paramValues[index];
-      if (paramValue !== '') {
-        // Parameter MUST exist now (either pre-existing or just created)
-        const param = testCase.parameters?.find((p: any) => p.name === paramName);
+      const paramValue = paramValues[index] ?? '';
 
-        if (!param) {
-          throw new Error(`Parameter "${paramName}" not found after creation. This should not happen.`);
-        }
+      // Parameter MUST exist now (either pre-existing or just created)
+      const param = testCase.parameters?.find((p: any) => p.name === paramName);
 
-        parameter_values.push({
-          _type: 'parameter-value',
-          parameter_test_case_id: testCaseId,
-          parameter_id: param.id,
-          parameter_name: paramName,
-          parameter_value: paramValue
-        });
+      if (!param) {
+        throw new Error(`Parameter "${paramName}" not found after creation. This should not happen.`);
       }
+
+      parameter_values.push({
+        _type: 'parameter-value',
+        parameter_test_case_id: testCaseId,
+        parameter_id: param.id,
+        parameter_name: paramName,
+        parameter_value: paramValue
+      });
     });
 
     if (existingDataset) {
