@@ -167,15 +167,21 @@ export class DatasetClient extends BaseClient {
    * @param datasetIds - Single dataset ID or array of IDs
    */
   async deleteDatasets(datasetIds: number | number[]): Promise<void> {
-    const idsParam = Array.isArray(datasetIds) ? datasetIds.join(',') : datasetIds;
+    const ids = Array.isArray(datasetIds) ? datasetIds : [datasetIds];
 
-    const response = await this.makeRequest(`${this.baseURL}/datasets/${idsParam}`, {
-      method: 'DELETE'
-    });
+    // Squash TM's DELETE /datasets/{id} endpoint binds a single Long path
+    // variable — a comma-joined id list fails with 400 "Invalid type for
+    // argument #1 ('id')" regardless of how many ids are joined. Delete one
+    // at a time, same as ParameterClient.deleteParameters().
+    for (const id of ids) {
+      const response = await this.makeRequest(`${this.baseURL}/datasets/${id}`, {
+        method: 'DELETE'
+      });
 
-    if (!response.ok && response.status !== 204) {
-      const errorText = await response.text();
-      throw new Error(`Failed to delete dataset(s): ${response.status} ${errorText}`);
+      if (!response.ok && response.status !== 204) {
+        const errorText = await response.text();
+        throw new Error(`Failed to delete dataset ${id}: ${response.status} ${errorText}`);
+      }
     }
   }
 
