@@ -155,7 +155,7 @@ if [[ -n "$ITERATION_ID" ]]; then
     [[ -f "$HTML_FILE" ]] && CONVERT_ARGS+=(--html-report "$HTML_FILE")
     [[ -f "$LOG_FILE" ]] && CONVERT_ARGS+=(--log-file "$LOG_FILE")
     PAYLOAD_FILE="$(mktemp)"
-    python3 "$SCRIPT_DIR/junit_to_sqtm_import.py" "${CONVERT_ARGS[@]}" > "$PAYLOAD_FILE"
+    node "$SCRIPT_DIR/junit_to_sqtm_import.js" "${CONVERT_ARGS[@]}" > "$PAYLOAD_FILE"
 
     # Read SQTM_API_URL/TOKEN from the container's own env (never printed).
     SQTM_API_URL_VAL="$(docker exec "$CONTAINER" printenv SQTM_API_URL)"
