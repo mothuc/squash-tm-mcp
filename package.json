@@ -13,7 +13,8 @@
     "automated": "tsx scripts/markAutomated.ts",
     "get-project": "tsx scripts/getProject.ts",
     "get-all-projects": "tsx scripts/getAllProjects.ts",
-    "test:iteration": "tsx scripts/runIterationTests.ts"
+    "test:iteration": "tsx scripts/runIterationTests.ts",
+    "run-batch": "tsx scripts/runAutomatedSuiteBatch.ts"
   },
   "keywords": [
     "mcp",

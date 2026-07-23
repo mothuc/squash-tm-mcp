@@ -10,6 +10,23 @@ interface WebSession {
   webBaseURL: string;
 }
 
+export interface CreateAndExecuteConfig {
+  iterationId: number;
+  testPlanSubsetIds: number[];
+  projectId: number;
+  namespaces?: string[];
+  environmentTags?: string[];
+  environmentVariables?: Record<string, string>;
+}
+
+export interface BatchResult {
+  batchIndex: number;
+  testPlanSubsetIds: number[];
+  success: boolean;
+  response?: any;
+  error?: string;
+}
+
 export class AutomationClient extends BaseClient {
   /**
    * Cached web session, reused across calls until it is rejected (401/403)
@@ -206,5 +223,199 @@ export class AutomationClient extends BaseClient {
   async getAutomationRequestStatus(testCaseId: string): Promise<string> {
     // TODO: Implement based on API endpoint
     throw new Error('Not implemented yet');
+  }
+
+  /**
+   * Raw test-plan items for an iteration ({ id, execution_status, ... } per
+   * item). Shared by getIterationTestPlanItemIds and getIterationTestPlanStatuses.
+   */
+  private async fetchIterationTestPlanItems(iterationId: number): Promise<any[]> {
+    const response = await this.makeRequest(`${this.baseURL}/iterations/${iterationId}/test-plan?size=1000`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to fetch test plan for iteration ${iterationId}: ${response.status} ${response.statusText}\n${errorText}`
+      );
+    }
+
+    const data: any = await response.json();
+    return data._embedded?.['test-plan'] || [];
+  }
+
+  /**
+   * Fetch test-plan-item IDs for an iteration (the "10451" style IDs used as
+   * testPlanSubsetIds), optionally filtered by execution_status. Uses the
+   * REST API (Bearer/Basic token), not the web session.
+   */
+  async getIterationTestPlanItemIds(iterationId: number, executionStatusFilter?: string[]): Promise<number[]> {
+    const items = await this.fetchIterationTestPlanItems(iterationId);
+
+    const filtered =
+      executionStatusFilter && executionStatusFilter.length > 0
+        ? items.filter((item) => executionStatusFilter.includes(item.execution_status))
+        : items;
+
+    return filtered.map((item) => item.id);
+  }
+
+  /**
+   * Current execution_status per test-plan-item ID, e.g. { 10456: "SUCCESS" }.
+   * Used to detect when a dispatched batch has actually finished running,
+   * as opposed to merely having been submitted to the Orchestrator.
+   */
+  async getIterationTestPlanStatuses(iterationId: number): Promise<Record<number, string>> {
+    const items = await this.fetchIterationTestPlanItems(iterationId);
+    const statuses: Record<number, string> = {};
+    for (const item of items) {
+      statuses[item.id] = item.execution_status;
+    }
+    return statuses;
+  }
+
+  /**
+   * Submit one automated-suite execution workflow to Squash Orchestrator.
+   * Requires web session authentication.
+   *
+   * Hits: POST /backend/automated-suites/create-and-execute
+   */
+  async createAndExecute(config: CreateAndExecuteConfig): Promise<any> {
+    const {
+      iterationId,
+      testPlanSubsetIds,
+      projectId,
+      namespaces = ['default'],
+      environmentTags = [],
+      environmentVariables = {},
+    } = config;
+
+    const wrappedEnvVariables: Record<string, { value: string; verbatim: boolean }> = {};
+    for (const [key, value] of Object.entries(environmentVariables)) {
+      wrappedEnvVariables[key] = { value, verbatim: true };
+    }
+
+    const response = await this.sessionRequest(
+      (webBaseURL) => `${webBaseURL}/backend/automated-suites/create-and-execute`,
+      (session) => ({
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'Content-Type': 'application/json',
+          'Cookie': session.cookieHeader,
+          'X-XSRF-TOKEN': session.xsrfToken
+        },
+        body: JSON.stringify({
+          context: { type: 'ITERATION', id: iterationId },
+          testPlanSubsetIds,
+          filterValues: [],
+          executionConfigurations: [],
+          squashAutomExecutionConfigurations: [
+            {
+              projectId,
+              namespaces,
+              environmentTags,
+              environmentVariables: wrappedEnvVariables,
+            },
+          ],
+        }),
+      })
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to create-and-execute: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  /**
+   * Statuses meaning "still executing" on a test-plan-item. Anything else
+   * (SUCCESS, FAILURE, BLOCKED, NOT_RUN, ...) is treated as finished, since
+   * Squash TM's terminal status set isn't fully documented — biasing toward
+   * "done" avoids hanging forever on an unrecognized status. If a slot frees
+   * up earlier than expected in practice, narrow this set.
+   */
+  private static readonly IN_PROGRESS_STATUSES = new Set(['READY', 'RUNNING']);
+
+  /**
+   * Split testPlanSubsetIds into batches and submit each as its own
+   * create-and-execute workflow, keeping at most `concurrency` batches
+   * actually RUNNING at once (polling real execution_status, not just
+   * submission latency) — so `concurrency` genuinely caps how many agent
+   * containers are occupied, leaving the rest idle/free for other work.
+   */
+  async createAndExecuteInBatches(
+    config: CreateAndExecuteConfig,
+    batchSize = 10,
+    concurrency = 5,
+    pollIntervalMs = 15000,
+    onProgress?: (info: { submitted: number; total: number; running: number; finished: number }) => void
+  ): Promise<BatchResult[]> {
+    const { iterationId, testPlanSubsetIds, ...rest } = config;
+
+    const batches: number[][] = [];
+    for (let i = 0; i < testPlanSubsetIds.length; i += batchSize) {
+      batches.push(testPlanSubsetIds.slice(i, i + batchSize));
+    }
+
+    const results: BatchResult[] = new Array(batches.length);
+    const pending = batches.map((ids, index) => ({ index, ids }));
+    const inFlight = new Map<number, number[]>(); // batchIndex -> item IDs not yet finished
+    let submittedCount = 0;
+    let finishedCount = 0;
+
+    const reportProgress = () => {
+      onProgress?.({ submitted: submittedCount, total: batches.length, running: inFlight.size, finished: finishedCount });
+    };
+
+    const submitNext = async (): Promise<void> => {
+      const next = pending.shift();
+      if (!next) return;
+      submittedCount++;
+      try {
+        const response = await this.createAndExecute({ ...rest, iterationId, testPlanSubsetIds: next.ids });
+        results[next.index] = { batchIndex: next.index, testPlanSubsetIds: next.ids, success: true, response };
+        inFlight.set(next.index, [...next.ids]);
+      } catch (error: any) {
+        results[next.index] = { batchIndex: next.index, testPlanSubsetIds: next.ids, success: false, error: error.message };
+        finishedCount++;
+      }
+      reportProgress();
+    };
+
+    const initialSlots = Math.min(concurrency, batches.length);
+    for (let i = 0; i < initialSlots; i++) {
+      await submitNext();
+    }
+
+    while (inFlight.size > 0) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+      const statuses = await this.getIterationTestPlanStatuses(iterationId);
+
+      for (const [batchIndex, ids] of Array.from(inFlight.entries())) {
+        const stillRunning = ids.filter((id) => AutomationClient.IN_PROGRESS_STATUSES.has(statuses[id]));
+        if (stillRunning.length === 0) {
+          inFlight.delete(batchIndex);
+          finishedCount++;
+        } else {
+          inFlight.set(batchIndex, stillRunning);
+        }
+      }
+      reportProgress();
+
+      const freedSlots = concurrency - inFlight.size;
+      for (let i = 0; i < freedSlots && pending.length > 0; i++) {
+        await submitNext();
+      }
+    }
+
+    while (pending.length > 0) {
+      await submitNext();
+    }
+
+    return results;
   }
 }

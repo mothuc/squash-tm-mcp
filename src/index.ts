@@ -169,6 +169,60 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: 'run_automated_suite_batch',
+        description: 'Run a large iteration test plan by splitting testPlanSubsetIds into batches and submitting each batch as its own create-and-execute workflow to Squash Orchestrator. Squash Orchestrator hands each workflow to whichever automation-server agent is idle, so batching (instead of one call with every ID) is what actually spreads execution across multiple idle containers in parallel (requires web session).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            iterationId: {
+              type: 'number',
+              description: 'Squash TM iteration ID',
+            },
+            testPlanSubsetIds: {
+              type: 'array',
+              items: { type: 'number' },
+              description: 'Test plan item IDs to execute. If omitted, every item in the iteration test plan is fetched automatically (optionally narrowed by executionStatusFilter).',
+            },
+            executionStatusFilter: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Only used when testPlanSubsetIds is omitted. Restrict auto-fetched items to these execution_status values (e.g. ["FAILURE", "BLOCKED"]).',
+            },
+            projectId: {
+              type: 'number',
+              description: 'Squash Orchestrator project ID (squashAutomExecutionConfigurations.projectId)',
+            },
+            namespaces: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Orchestrator namespaces to dispatch to (default: ["default"])',
+            },
+            environmentTags: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Capability tags used to route to a matching agent pool (default: [])',
+            },
+            environmentVariables: {
+              type: 'object',
+              description: 'Plain key/value env vars passed to the runner container, e.g. { BRANCH, ENV, DEVICE, REPO, DEBUG }',
+            },
+            batchSize: {
+              type: 'number',
+              description: 'Test cases per batch/workflow (default: 10)',
+            },
+            concurrency: {
+              type: 'number',
+              description: 'Max number of batches actually RUNNING at once, verified by polling execution_status — not just how many are submitted. E.g. concurrency=3 with 5 available agents leaves 2 idle. (default: 5)',
+            },
+            pollIntervalMs: {
+              type: 'number',
+              description: 'How often (ms) to re-check execution_status to detect a finished batch and free its slot (default: 15000)',
+            },
+          },
+          required: ['iterationId', 'projectId'],
+        },
+      },
+      {
         name: 'create_keyword_test_case',
         description: 'Create a new keyword-test-case (shown as "BDD Test Case" in the Squash TM UI; API _type is "keyword-test-case") with individual keyword steps. This creates an empty test case shell that can be populated with keyword steps using create_test_step.',
         inputSchema: {
@@ -630,6 +684,53 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text',
               text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'run_automated_suite_batch': {
+        const {
+          iterationId,
+          testPlanSubsetIds,
+          executionStatusFilter,
+          projectId,
+          namespaces,
+          environmentTags,
+          environmentVariables,
+          batchSize,
+          concurrency,
+          pollIntervalMs,
+        } = args as {
+          iterationId: number;
+          testPlanSubsetIds?: number[];
+          executionStatusFilter?: string[];
+          projectId: number;
+          namespaces?: string[];
+          environmentTags?: string[];
+          environmentVariables?: Record<string, string>;
+          batchSize?: number;
+          concurrency?: number;
+          pollIntervalMs?: number;
+        };
+
+        const resolvedIds =
+          testPlanSubsetIds && testPlanSubsetIds.length > 0
+            ? testPlanSubsetIds
+            : await client.getIterationTestPlanItemIds(iterationId, executionStatusFilter);
+
+        const results = await client.createAndExecuteInBatches(
+          { iterationId, testPlanSubsetIds: resolvedIds, projectId, namespaces, environmentTags, environmentVariables },
+          batchSize,
+          concurrency,
+          pollIntervalMs
+        );
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(results, null, 2),
             },
           ],
         };

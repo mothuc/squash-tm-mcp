@@ -1,0 +1,110 @@
+#!/usr/bin/env node
+
+import * as dotenv from 'dotenv';
+import { AutomationClient } from '../src/clients/AutomationClient.js';
+
+dotenv.config();
+
+function parseArgs(argv: string[]) {
+  const positional: string[] = [];
+  const flags: Record<string, string> = {};
+
+  for (const arg of argv) {
+    const match = arg.match(/^--([\w-]+)=(.*)$/);
+    if (match) {
+      flags[match[1]] = match[2];
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  return { positional, flags };
+}
+
+async function main() {
+  const { positional, flags } = parseArgs(process.argv.slice(2));
+  const [iterationIdArg, projectIdArg] = positional;
+
+  if (!iterationIdArg || !projectIdArg) {
+    console.error(
+      '❌ Usage: npm run run-batch -- <iterationId> <projectId> ' +
+        '[--test-ids=1,2,3] [--status=FAILURE,BLOCKED] [--batch-size=10] [--concurrency=5] ' +
+        '[--poll-interval=15] [--namespaces=default] [--env-tags=tag1,tag2]\n' +
+        '   If --test-ids is omitted, every test-plan item in the iteration is fetched automatically ' +
+        '(optionally narrowed by --status).\n' +
+        '   --concurrency caps how many batches are actually RUNNING at once (polled via execution_status), ' +
+        'not just how many are submitted — e.g. --concurrency=3 on 5 available agents leaves 2 idle.'
+    );
+    process.exit(1);
+  }
+
+  const iterationId = parseInt(iterationIdArg, 10);
+  const projectId = parseInt(projectIdArg, 10);
+  const batchSize = flags['batch-size'] ? parseInt(flags['batch-size'], 10) : 10;
+  const concurrency = flags['concurrency'] ? parseInt(flags['concurrency'], 10) : 5;
+  const pollIntervalMs = flags['poll-interval'] ? parseInt(flags['poll-interval'], 10) * 1000 : 15000;
+  const namespaces = flags['namespaces'] ? flags['namespaces'].split(',') : ['default'];
+  const environmentTags = flags['env-tags'] ? flags['env-tags'].split(',') : [];
+
+  const client = new AutomationClient();
+
+  let testPlanSubsetIds: number[];
+  if (flags['test-ids']) {
+    testPlanSubsetIds = flags['test-ids'].split(',').map((id) => parseInt(id.trim(), 10));
+  } else {
+    const statusFilter = flags['status'] ? flags['status'].split(',') : undefined;
+    console.log(
+      `\n🔎 Fetching test-plan items for iteration ${iterationId}` +
+        (statusFilter ? ` (status in [${statusFilter.join(', ')}])` : ' (all statuses)') +
+        '...'
+    );
+    testPlanSubsetIds = await client.getIterationTestPlanItemIds(iterationId, statusFilter);
+    console.log(`📋 Found ${testPlanSubsetIds.length} test-plan item(s)`);
+  }
+
+  if (testPlanSubsetIds.length === 0) {
+    console.log('\n⚠️  Nothing to execute.');
+    process.exit(0);
+  }
+
+  // Matches the env vars passed to the runner container in Squash Orchestrator
+  // (see squashAutomExecutionConfigurations.environmentVariables). Only forwards
+  // ones actually set, so callers can rely on defaults configured on the server.
+  const environmentVariables: Record<string, string> = {};
+  for (const key of ['BRANCH', 'ENV', 'DEVICE', 'REPO', 'DEBUG']) {
+    if (process.env[key]) {
+      environmentVariables[key] = process.env[key]!;
+    }
+  }
+
+  console.log(
+    `\n🚀 Dispatching ${testPlanSubsetIds.length} test case(s) from iteration ${iterationId} ` +
+      `in batches of ${batchSize} (max ${concurrency} running at once, polling every ${pollIntervalMs / 1000}s)...`
+  );
+
+  const results = await client.createAndExecuteInBatches(
+    { iterationId, testPlanSubsetIds, projectId, namespaces, environmentTags, environmentVariables },
+    batchSize,
+    concurrency,
+    pollIntervalMs,
+    (info) => {
+      console.log(`   … submitted ${info.submitted}/${info.total}, running now: ${info.running}, finished: ${info.finished}`);
+    }
+  );
+
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.length - succeeded;
+
+  console.log(`\n📊 Batches: ${results.length} total, ✅ ${succeeded} succeeded, ❌ ${failed} failed\n`);
+  for (const r of results) {
+    const label = r.success ? '✅' : '❌';
+    console.log(`${label} Batch ${r.batchIndex + 1} [${r.testPlanSubsetIds.join(', ')}]${r.error ? ` - ${r.error}` : ''}`);
+  }
+
+  process.exit(failed > 0 ? 1 : 0);
+}
+
+main().catch((error) => {
+  console.error('❌ Error:', error.message);
+  process.exit(1);
+});

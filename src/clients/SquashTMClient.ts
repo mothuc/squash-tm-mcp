@@ -2,7 +2,7 @@ import { TestCaseClient } from './TestCaseClient.js';
 import { TestStepClient } from './TestStepClient.js';
 import { ParameterClient } from './ParameterClient.js';
 import { DatasetClient } from './DatasetClient.js';
-import { AutomationClient } from './AutomationClient.js';
+import { AutomationClient, CreateAndExecuteConfig, BatchResult } from './AutomationClient.js';
 import { ParserClient } from './ParserClient.js';
 import { ProjectClient } from './ProjectClient.js';
 import {
@@ -209,6 +209,24 @@ export class SquashTMClient {
 
   async getAutomationRequestStatus(testCaseId: string): Promise<string> {
     return this.automationClient.getAutomationRequestStatus(testCaseId);
+  }
+
+  async getIterationTestPlanItemIds(iterationId: number, executionStatusFilter?: string[]): Promise<number[]> {
+    return this.automationClient.getIterationTestPlanItemIds(iterationId, executionStatusFilter);
+  }
+
+  async createAndExecute(config: CreateAndExecuteConfig): Promise<any> {
+    return this.automationClient.createAndExecute(config);
+  }
+
+  async createAndExecuteInBatches(
+    config: CreateAndExecuteConfig,
+    batchSize?: number,
+    concurrency?: number,
+    pollIntervalMs?: number,
+    onProgress?: (info: { submitted: number; total: number; running: number; finished: number }) => void
+  ): Promise<BatchResult[]> {
+    return this.automationClient.createAndExecuteInBatches(config, batchSize, concurrency, pollIntervalMs, onProgress);
   }
 
   // ===== Parser Methods =====
