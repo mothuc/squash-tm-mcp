@@ -2,6 +2,7 @@
 # Run a Playwright/BDD test inside the pw-ssh-office-01 container using a
 # local checkout of the test repo, mirroring the env vars the real
 # Orchestrator sets when it invokes a test (see build/playwright-ssh/npx).
+# For a container-free run directly on this machine, see run-local-test.sh.
 set -euo pipefail
 
 CONTAINER="pw-ssh-office-01"
@@ -155,7 +156,7 @@ if [[ -n "$ITERATION_ID" ]]; then
     [[ -f "$HTML_FILE" ]] && CONVERT_ARGS+=(--html-report "$HTML_FILE")
     [[ -f "$LOG_FILE" ]] && CONVERT_ARGS+=(--log-file "$LOG_FILE")
     PAYLOAD_FILE="$(mktemp)"
-    node "$SCRIPT_DIR/junit_to_sqtm_import.js" "${CONVERT_ARGS[@]}" > "$PAYLOAD_FILE"
+    node "$SCRIPT_DIR/build_sqtm_import_payload.js" "${CONVERT_ARGS[@]}" > "$PAYLOAD_FILE"
 
     # Read SQTM_API_URL/TOKEN from the container's own env (never printed).
     SQTM_API_URL_VAL="$(docker exec "$CONTAINER" printenv SQTM_API_URL)"

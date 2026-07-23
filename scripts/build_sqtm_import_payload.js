@@ -3,7 +3,7 @@
 // POST /api/rest/latest/import/results/{iteration_id} endpoint.
 //
 // Usage:
-//   node junit_to_sqtm_import.js <junit.xml> --reference REF [--dataset-name NAME]
+//   node build_sqtm_import_payload.js <junit.xml> --reference REF [--dataset-name NAME]
 //                                 [--html-report index.html] [--log-file execution.log]
 //
 // Two separate SquashTM views read attachments from two different places:
@@ -176,7 +176,7 @@ function encodeAttachment(filePath, name) {
 }
 
 function parseArgs(argv) {
-  const args = { junitXml: null, reference: null, datasetName: null, htmlReport: null, logFile: null };
+  const args = { junitXml: null, reference: null, datasetName: null, htmlReport: null, logFile: null, attachments: [] };
   const rest = [...argv];
   while (rest.length) {
     const arg = rest.shift();
@@ -193,13 +193,16 @@ function parseArgs(argv) {
       case "--log-file":
         args.logFile = rest.shift();
         break;
+      case "--attachment":
+        args.attachments.push(rest.shift());
+        break;
       default:
         if (args.junitXml === null) args.junitXml = arg;
         break;
     }
   }
   if (!args.junitXml || !args.reference) {
-    console.error("Usage: junit_to_sqtm_import.js <junit.xml> --reference REF [--dataset-name NAME] [--html-report FILE] [--log-file FILE]");
+    console.error("Usage: build_sqtm_import_payload.js <junit.xml> --reference REF [--dataset-name NAME] [--html-report FILE] [--log-file FILE] [--attachment FILE]...");
     process.exit(1);
   }
   return args;
@@ -229,7 +232,15 @@ function main() {
   if (fs.existsSync(args.junitXml) && fs.statSync(args.junitXml).isFile()) {
     attachments.push(encodeAttachment(args.junitXml));
   }
-
+  // Self-contained local reports (dtn-playwright-report with CI unset) link to
+  // screenshots/videos/traces via relative "attachments/<file>" hrefs inside
+  // index.html — preserve that same relative name so the link has a chance to
+  // resolve wherever SquashTM serves sibling attachments from.
+  for (const file of args.attachments) {
+    if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+      attachments.push(encodeAttachment(file, "attachments/" + path.basename(file)));
+    }
+  }
   // The "Automated Suite" view (iteration/{id}/automated-suite) reads
   // automated_test_suite.attachments, not tests[].attachments — attach the
   // console log there under its own filename, plus the same HTML report.
