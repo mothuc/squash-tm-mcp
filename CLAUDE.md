@@ -177,46 +177,37 @@ https://qa.dtn.com.vn/squash/api/rest/latest/docs/api-documentation.html
 
 ### Finding API Endpoints
 
-**Using Puppeteer MCP to Search Documentation**:
+**Preferred: local text cache + `rg`**
 
-When you need to find API endpoints in the large HTML documentation file:
+The doc is a single ~1.7MB HTML page (~600KB / ~25k lines once stripped to plain
+text) — too large to read in full each time, but perfect for `rg` once cached
+locally as text.
+
+```bash
+# Fetch + cache as plain text (run once, or re-run to refresh):
+node scripts/fetch-api-docs.js
+# -> .cache/api-documentation.txt (gitignored)
+
+# Then search by endpoint/section name, with context lines:
+rg -n -i -A 20 "delete clearances for user" .cache/api-documentation.txt
+rg -n -i -A 20 "get iteration" .cache/api-documentation.txt
+```
+
+This avoids re-fetching/re-rendering the page per lookup and doesn't depend on
+a browser session.
+
+**Fallback: Puppeteer MCP** — only needed if the docs page requires a live
+browser session (e.g. auth-gated instance) that plain `curl`/`fetch` can't
+reach:
 
 ```javascript
-// Navigate to the API docs
 await mcp__puppeteer__puppeteer_navigate({
   url: "https://qa.dtn.com.vn/squash/api/rest/latest/docs/api-documentation.html"
 });
-
-// Search for specific API sections (e.g., "iteration")
 await mcp__puppeteer__puppeteer_evaluate({
-  script: `
-    (function() {
-      const text = document.body.innerText;
-      const lines = text.split('\\n');
-      let startIdx = -1;
-      let endIdx = -1;
-
-      // Find section by title (e.g., "Get iteration")
-      for (let i = 0; i < lines.length; i++) {
-        if (lines[i].trim() === 'Get iteration' && lines[i+2].includes('/iterations/{id}')) {
-          startIdx = i;
-        }
-        if (startIdx !== -1 && endIdx === -1 && i > startIdx + 10) {
-          if (lines[i].match(/^[A-Z][a-z]+ iteration$/)) {
-            endIdx = i;
-            break;
-          }
-        }
-      }
-
-      if (endIdx === -1) endIdx = Math.min(startIdx + 120, lines.length);
-      return lines.slice(startIdx, endIdx).join('\\n');
-    })()
-  `
+  script: `document.body.innerText`
 });
 ```
-
-**Tip**: The documentation is a large single-page HTML. Use Puppeteer's `document.body.innerText` to extract clean text, then search by section headers.
 
 ### Known API Endpoints
 

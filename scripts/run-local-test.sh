@@ -127,12 +127,28 @@ if [[ -n "$ITERATION_ID" ]]; then
   if [[ ! -f "$JUNIT_FILE" ]]; then
     echo "⚠️  No JUnit report at $JUNIT_FILE — skipping SquashTM import" >&2
   else
+    # Local-mode dtn-playwright-report still links screenshots/videos via
+    # relative "attachments/<file>" paths inside index.html — SquashTM stores
+    # each imported attachment as an independent blob, so those links 404 once
+    # served standalone. Inline them as base64 data: URIs before upload.
+    if [[ -f "$HTML_FILE" ]]; then
+      INLINE_ARGS=("$HTML_FILE")
+      [[ "$INCLUDE_HEAVY" == "true" ]] && INLINE_ARGS+=(--include-heavy-assets)
+      node "$SCRIPT_DIR/inline-report-attachments.js" "${INLINE_ARGS[@]}"
+    fi
+
     ATTACH_ARGS=()
     if [[ -d "$ATTACH_DIR" ]]; then
       while IFS= read -r -d '' f; do
         ext="${f##*.}"
-        if [[ "$INCLUDE_HEAVY" != "true" && ( "$ext" == "zip" || "$ext" == "webm" ) ]]; then
-          echo "↷ Skipping heavy asset (use --include-heavy-assets to attach): $(basename "$f")" >&2
+        if [[ "$ext" == "zip" || "$ext" == "webm" ]]; then
+          # SquashTM's import endpoint rejects both types outright (its
+          # attachment whitelist has mp4 but not webm, and no zip at all),
+          # and trace .zip files are also usually oversized (>4MB limit).
+          # No flag can make raw-attaching these succeed — video is instead
+          # available via the base64 copy inline-report-attachments.js
+          # already embeds in index.html when --include-heavy-assets is set.
+          echo "↷ Skipping raw attachment (unsupported by SquashTM import): $(basename "$f")" >&2
           continue
         fi
         ATTACH_ARGS+=(--attachment "$f")

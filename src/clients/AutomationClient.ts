@@ -11,12 +11,18 @@ interface WebSession {
 }
 
 export interface CreateAndExecuteConfig {
+  /** Iteration the test-plan items belong to. Always used for status polling
+   *  in createAndExecuteInBatches, regardless of `context`. */
   iterationId: number;
   testPlanSubsetIds: number[];
   projectId: number;
   namespaces?: string[];
   environmentTags?: string[];
   environmentVariables?: Record<string, string>;
+  /** Overrides the `context` sent to create-and-execute. Defaults to
+   *  `{ type: 'ITERATION', id: iterationId }` when omitted — pass
+   *  `{ type: 'TEST_SUITE', id: <testSuiteId> }` to trigger from a suite. */
+  context?: { type: 'ITERATION' | 'TEST_SUITE'; id: number };
 }
 
 export interface BatchResult {
@@ -274,6 +280,99 @@ export class AutomationClient extends BaseClient {
   }
 
   /**
+   * Raw test-plan items for a test suite. A test suite doesn't own separate
+   * test-plan-items — it's a filtered view over a subset of its parent
+   * iteration's test plan, so these ids live in the same space as
+   * getIterationTestPlanItemIds/getIterationTestPlanStatuses.
+   */
+  private async fetchTestSuiteTestPlanItems(testSuiteId: number): Promise<any[]> {
+    const response = await this.makeRequest(`${this.baseURL}/test-suites/${testSuiteId}/test-plan?size=1000`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Failed to fetch test plan for test suite ${testSuiteId}: ${response.status} ${response.statusText}\n${errorText}`
+      );
+    }
+
+    const data: any = await response.json();
+    return data._embedded?.['test-plan'] || [];
+  }
+
+  /**
+   * Fetch test-plan-item IDs for a test suite, optionally filtered by
+   * execution_status.
+   */
+  async getTestSuiteTestPlanItemIds(testSuiteId: number, executionStatusFilter?: string[]): Promise<number[]> {
+    const items = await this.fetchTestSuiteTestPlanItems(testSuiteId);
+
+    const filtered =
+      executionStatusFilter && executionStatusFilter.length > 0
+        ? items.filter((item) => executionStatusFilter.includes(item.execution_status))
+        : items;
+
+    return filtered.map((item) => item.id);
+  }
+
+  /**
+   * Resolves the parent iteration id of a test suite — needed because
+   * createAndExecuteInBatches always polls status via the enclosing
+   * iteration, even when triggering with `context: { type: 'TEST_SUITE' }`.
+   */
+  async getTestSuiteParentIterationId(testSuiteId: number): Promise<number> {
+    const response = await this.makeRequest(`${this.baseURL}/test-suites/${testSuiteId}`);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to fetch test suite ${testSuiteId}: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+
+    const data: any = await response.json();
+    const iterationId = data.parent?.id;
+    if (!iterationId) {
+      throw new Error(`Test suite ${testSuiteId} has no parent iteration`);
+    }
+    return iterationId;
+  }
+
+  /**
+   * Resolves/associates the automated script for the given test-plan-items
+   * (by convention, matching automated_test_reference) at request time,
+   * mirroring what the Squash TM UI does right before showing the
+   * execute-confirmation dialog. This is what lets create-and-execute work
+   * even when the test case's `automated_test` REST field is null — the
+   * public REST automated-suite-utils/{id}/executor flow requires that
+   * field to be pre-populated and silently no-ops otherwise.
+   *
+   * Hits: POST /backend/automation-requests/associate-TA-script?testPlanItemsIds[]=...
+   */
+  async associateTAScript(testPlanItemIds: number[]): Promise<void> {
+    const params = new URLSearchParams();
+    for (const id of testPlanItemIds) {
+      params.append('testPlanItemsIds[]', String(id));
+    }
+
+    const response = await this.sessionRequest(
+      (webBaseURL) => `${webBaseURL}/backend/automation-requests/associate-TA-script?${params.toString()}`,
+      (session) => ({
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'Content-Type': 'application/json',
+          'Cookie': session.cookieHeader,
+          'X-XSRF-TOKEN': session.xsrfToken
+        },
+        body: '{}'
+      })
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to associate TA script: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+  }
+
+  /**
    * Submit one automated-suite execution workflow to Squash Orchestrator.
    * Requires web session authentication.
    *
@@ -287,6 +386,7 @@ export class AutomationClient extends BaseClient {
       namespaces = ['default'],
       environmentTags = [],
       environmentVariables = {},
+      context = { type: 'ITERATION' as const, id: iterationId },
     } = config;
 
     const wrappedEnvVariables: Record<string, { value: string; verbatim: boolean }> = {};
@@ -305,7 +405,7 @@ export class AutomationClient extends BaseClient {
           'X-XSRF-TOKEN': session.xsrfToken
         },
         body: JSON.stringify({
-          context: { type: 'ITERATION', id: iterationId },
+          context,
           testPlanSubsetIds,
           filterValues: [],
           executionConfigurations: [],
@@ -354,6 +454,11 @@ export class AutomationClient extends BaseClient {
     onProgress?: (info: { submitted: number; total: number; running: number; finished: number }) => void
   ): Promise<BatchResult[]> {
     const { iterationId, testPlanSubsetIds, ...rest } = config;
+
+    // Resolve script association for the whole set once upfront, not per
+    // batch — matches the UI's single associate-TA-script call before the
+    // execute-confirmation dialog.
+    await this.associateTAScript(testPlanSubsetIds);
 
     const batches: number[][] = [];
     for (let i = 0; i < testPlanSubsetIds.length; i += batchSize) {

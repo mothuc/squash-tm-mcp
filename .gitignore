@@ -36,3 +36,6 @@ coverage/
 # Temporary files
 *.tmp
 .temp/
+
+# Cached downloads (e.g. fetch-api-docs.js output)
+.cache/

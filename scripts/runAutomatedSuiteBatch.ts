@@ -23,14 +23,15 @@ function parseArgs(argv: string[]) {
 
 async function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2));
-  const [iterationIdArg, projectIdArg] = positional;
+  const testSuiteIdArg = flags['test-suite'];
 
-  if (!iterationIdArg || !projectIdArg) {
+  if (!testSuiteIdArg && positional.length < 2) {
     console.error(
       '❌ Usage: npm run run-batch -- <iterationId> <projectId> ' +
         '[--test-ids=1,2,3] [--status=FAILURE,BLOCKED] [--batch-size=10] [--concurrency=5] ' +
         '[--poll-interval=15] [--namespaces=default] [--env-tags=tag1,tag2]\n' +
-        '   If --test-ids is omitted, every test-plan item in the iteration is fetched automatically ' +
+        '   or: npm run run-batch -- --test-suite=46 <projectId> [same flags as above]\n' +
+        '   If --test-ids is omitted, every test-plan item in the iteration/suite is fetched automatically ' +
         '(optionally narrowed by --status).\n' +
         '   --concurrency caps how many batches are actually RUNNING at once (polled via execution_status), ' +
         'not just how many are submitted — e.g. --concurrency=3 on 5 available agents leaves 2 idle.'
@@ -38,29 +39,59 @@ async function main() {
     process.exit(1);
   }
 
-  const iterationId = parseInt(iterationIdArg, 10);
-  const projectId = parseInt(projectIdArg, 10);
+  const client = new AutomationClient();
+
+  let iterationId: number;
+  let projectId: number;
+  let context: { type: 'ITERATION' | 'TEST_SUITE'; id: number } | undefined;
+  let testPlanSubsetIds: number[];
+  const statusFilter = flags['status'] ? flags['status'].split(',') : undefined;
+
+  if (testSuiteIdArg) {
+    const testSuiteId = parseInt(testSuiteIdArg, 10);
+    const [projectIdArg] = positional;
+    if (!projectIdArg) {
+      console.error('❌ Usage: npm run run-batch -- --test-suite=46 <projectId> [...]');
+      process.exit(1);
+    }
+    projectId = parseInt(projectIdArg, 10);
+    context = { type: 'TEST_SUITE', id: testSuiteId };
+    iterationId = await client.getTestSuiteParentIterationId(testSuiteId);
+
+    if (flags['test-ids']) {
+      testPlanSubsetIds = flags['test-ids'].split(',').map((id) => parseInt(id.trim(), 10));
+    } else {
+      console.log(
+        `\n🔎 Fetching test-plan items for test suite ${testSuiteId}` +
+          (statusFilter ? ` (status in [${statusFilter.join(', ')}])` : ' (all statuses)') +
+          '...'
+      );
+      testPlanSubsetIds = await client.getTestSuiteTestPlanItemIds(testSuiteId, statusFilter);
+      console.log(`📋 Found ${testPlanSubsetIds.length} test-plan item(s)`);
+    }
+  } else {
+    const [iterationIdArg, projectIdArg] = positional;
+    iterationId = parseInt(iterationIdArg, 10);
+    projectId = parseInt(projectIdArg, 10);
+
+    if (flags['test-ids']) {
+      testPlanSubsetIds = flags['test-ids'].split(',').map((id) => parseInt(id.trim(), 10));
+    } else {
+      console.log(
+        `\n🔎 Fetching test-plan items for iteration ${iterationId}` +
+          (statusFilter ? ` (status in [${statusFilter.join(', ')}])` : ' (all statuses)') +
+          '...'
+      );
+      testPlanSubsetIds = await client.getIterationTestPlanItemIds(iterationId, statusFilter);
+      console.log(`📋 Found ${testPlanSubsetIds.length} test-plan item(s)`);
+    }
+  }
+
   const batchSize = flags['batch-size'] ? parseInt(flags['batch-size'], 10) : 10;
   const concurrency = flags['concurrency'] ? parseInt(flags['concurrency'], 10) : 5;
   const pollIntervalMs = flags['poll-interval'] ? parseInt(flags['poll-interval'], 10) * 1000 : 15000;
   const namespaces = flags['namespaces'] ? flags['namespaces'].split(',') : ['default'];
   const environmentTags = flags['env-tags'] ? flags['env-tags'].split(',') : [];
-
-  const client = new AutomationClient();
-
-  let testPlanSubsetIds: number[];
-  if (flags['test-ids']) {
-    testPlanSubsetIds = flags['test-ids'].split(',').map((id) => parseInt(id.trim(), 10));
-  } else {
-    const statusFilter = flags['status'] ? flags['status'].split(',') : undefined;
-    console.log(
-      `\n🔎 Fetching test-plan items for iteration ${iterationId}` +
-        (statusFilter ? ` (status in [${statusFilter.join(', ')}])` : ' (all statuses)') +
-        '...'
-    );
-    testPlanSubsetIds = await client.getIterationTestPlanItemIds(iterationId, statusFilter);
-    console.log(`📋 Found ${testPlanSubsetIds.length} test-plan item(s)`);
-  }
 
   if (testPlanSubsetIds.length === 0) {
     console.log('\n⚠️  Nothing to execute.');
@@ -78,12 +109,13 @@ async function main() {
   }
 
   console.log(
-    `\n🚀 Dispatching ${testPlanSubsetIds.length} test case(s) from iteration ${iterationId} ` +
+    `\n🚀 Dispatching ${testPlanSubsetIds.length} test case(s) from ` +
+      `${context ? `test suite ${context.id}` : `iteration ${iterationId}`} ` +
       `in batches of ${batchSize} (max ${concurrency} running at once, polling every ${pollIntervalMs / 1000}s)...`
   );
 
   const results = await client.createAndExecuteInBatches(
-    { iterationId, testPlanSubsetIds, projectId, namespaces, environmentTags, environmentVariables },
+    { iterationId, testPlanSubsetIds, projectId, namespaces, environmentTags, environmentVariables, context },
     batchSize,
     concurrency,
     pollIntervalMs,
